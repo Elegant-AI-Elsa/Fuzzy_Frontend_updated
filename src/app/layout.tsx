@@ -1,9 +1,9 @@
+// app/layout.tsx
 import Footer from "@/app/_components/footer";
 import { CMS_NAME, HOME_OG_IMAGE_URL } from "@/lib/constants";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import cn from "classnames";
-import { ThemeSwitcher } from "./_components/theme-switcher";
 
 import "./globals.css";
 
@@ -25,6 +25,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        {/* This script runs before hydration and sets the correct theme */}
+        {/* <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                const theme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-mode', theme);
+              })();
+            `,
+          }}
+        /> */}
         <link
           rel="apple-touch-icon"
           sizes="180x180"
@@ -60,7 +71,6 @@ export default function RootLayout({
       <body
         className={cn(inter.className, "dark:bg-slate-900 dark:text-slate-400")}
       >
-        <ThemeSwitcher />
         <div className="min-h-screen">{children}</div>
         <Footer />
       </body>

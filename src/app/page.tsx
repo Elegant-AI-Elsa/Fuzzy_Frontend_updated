@@ -30,6 +30,8 @@ const Chatbot: React.FC = () => {
   const [sessionId, setSessionId] = useState<string>('');
   const [commonQuestions, setCommonQuestions] = useState<string[]>([]);
   const [isUserScrolled, setIsUserScrolled] = useState<boolean>(false);
+  // NEW: State to track if an appointment has been successfully booked
+  const [isBookingConfirmed, setIsBookingConfirmed] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -168,8 +170,12 @@ const Chatbot: React.FC = () => {
               });
             }
 
+            // NEW: Check for final message and set isBookingConfirmed state
             if (data.is_final) {
               isStreamComplete = true;
+              if (botMessageText.includes("Your appointment request has been submitted successfully!")) {
+                setIsBookingConfirmed(true);
+              }
             }
 
             if (data.session_id) {
@@ -210,11 +216,11 @@ const Chatbot: React.FC = () => {
   const handleQuestionClick = (question: string) => {
     sendMessage(question);
   };
- 
+  
   const handleTimeSlotClick = (slot: string) => {
     sendMessage(slot);
   };
- 
+  
   const handleConfirmSwitch = (choice: 'yes' | 'no') => {
     if (choice === 'yes') {
       clearChat();
@@ -228,6 +234,8 @@ const Chatbot: React.FC = () => {
     setMessages([]);
     const newSessionId = generateSessionId();
     setSessionId(newSessionId);
+    // NEW: Reset booking state when the chat is cleared
+    setIsBookingConfirmed(false);
     
     setTimeout(() => {
       setMessages([{
@@ -237,7 +245,7 @@ const Chatbot: React.FC = () => {
       }]);
     }, 100);
   };
- 
+  
   const renderMessageContent = (text: string) => {
     let messageToRender = text;
     let timeSlotsToRender: string[] = [];
@@ -332,13 +340,20 @@ const Chatbot: React.FC = () => {
           <div dangerouslySetInnerHTML={{ __html: formattedText.replace(/\n/g, '<br />') }} />
         )}
         
+        {/* UPDATED: Conditionally render the time slots based on booking status */}
         {timeSlotsToRender.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">
             {timeSlotsToRender.map((slot, index) => (
               <button
                 key={index}
                 onClick={() => handleTimeSlotClick(slot)}
-                className="px-4 py-2 text-sm bg-indigo-100 text-indigo-600 rounded-md border border-indigo-300 hover:bg-indigo-200 transition-colors"
+                // NEW: Use the isBookingConfirmed state to disable the buttons
+                disabled={isBookingConfirmed}
+                className={`px-4 py-2 text-sm rounded-md border transition-colors ${
+                  isBookingConfirmed 
+                    ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed' 
+                    : 'bg-indigo-100 text-indigo-600 border-indigo-300 hover:bg-indigo-200'
+                }`}
               >
                 {slot}
               </button>
@@ -348,7 +363,7 @@ const Chatbot: React.FC = () => {
       </>
     );
   };
- 
+  
   const handleScroll = () => {
     if (messagesContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
@@ -451,15 +466,27 @@ const Chatbot: React.FC = () => {
           <div className="p-4 bg-white border-t border-gray-200">
             <p className="text-sm text-gray-600 mb-2 font-medium">Quick questions:</p>
             <div className="space-y-2">
-              {(commonQuestions.length > 0 ? commonQuestions.slice(0, 3) : initialQuestions.slice(0, 3)).map((question, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleQuestionClick(question)}
-                  className="w-full text-left text-sm text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 p-2 rounded-md border border-indigo-200 transition-colors"
-                >
-                  {question}
-                </button>
-              ))}
+              {(commonQuestions.length > 0 ? commonQuestions.slice(0, 3) : initialQuestions.slice(0, 3)).map((question, index) => {
+                const isAppointmentQuestion = question.toLowerCase().includes("appointment");
+                // NEW: Disable the appointment button if a booking is confirmed
+                const isButtonDisabled = isAppointmentQuestion && isBookingConfirmed;
+
+                return (
+                  <button
+                    key={index}
+                    onClick={() => handleQuestionClick(question)}
+                    className={`w-full text-left text-sm p-2 rounded-md border transition-colors ${
+                      isButtonDisabled
+                        ? 'text-gray-400 bg-gray-100 cursor-not-allowed border-gray-300'
+                        : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border-indigo-200'
+                    }`}
+                    // NEW: Add disabled attribute
+                    disabled={isButtonDisabled}
+                  >
+                    {question}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

@@ -1,88 +1,150 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Menu, X, Send, Rocket, Briefcase, Users, Mail, RotateCcw } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Menu, X, Send, Rocket, Briefcase, Users, Mail, RotateCcw, MessageCircle, Clock, CheckCircle, AlertCircle, Phone } from 'lucide-react';
 
-// Define a type for a chat message
+// Enhanced type definitions
 interface Message {
   sender: 'user' | 'bot';
   text: string;
   timestamp?: string;
   isError?: boolean;
+  id: string;
 }
 
-// Define the pages for navigation
+interface ChatSession {
+  sessionId: string;
+  isBookingConfirmed: boolean;
+  userDetails?: {
+    name: string;
+    email: string;
+    phone: string;
+    timing: string;
+  };
+}
+
 type Page = 'home' | 'about' | 'careers' | 'contact';
+type ChatStatus = 'idle' | 'typing' | 'connecting' | 'error';
 
-// The URL for the chatbot API
-const API_URL = "http://127.0.0.1:5000/api/chat";
+// Configuration
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000";
 
-// Generate a unique session ID
+const API_URL = `${API_BASE_URL}/api/chat`;
+const COMMON_QUESTIONS_URL = `${API_BASE_URL}/api/common-questions`;
+
+
+// Utility functions
 const generateSessionId = (): string => {
   return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
 };
 
+const generateMessageId = (): string => {
+  return 'msg_' + Math.random().toString(36).substr(2, 9);
+};
+
+const formatTimestamp = (): string => {
+  return new Date().toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true 
+  });
+};
+
+// Enhanced Chatbot Component
 const Chatbot: React.FC = () => {
+  // Core state
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [sessionId, setSessionId] = useState<string>('');
+  const [chatStatus, setChatStatus] = useState<ChatStatus>('idle');
+  const [session, setSession] = useState<ChatSession>({
+    sessionId: '',
+    isBookingConfirmed: false
+  });
+
+  // UI state
   const [commonQuestions, setCommonQuestions] = useState<string[]>([]);
   const [isUserScrolled, setIsUserScrolled] = useState<boolean>(false);
-  // NEW: State to track if an appointment has been successfully booked
-  const [isBookingConfirmed, setIsBookingConfirmed] = useState<boolean>(false);
+  const [showScrollButton, setShowScrollButton] = useState<boolean>(false);
+  const [retryCount, setRetryCount] = useState<number>(0);
 
+  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Function to format the chatbot's response text with markdown
-  const formatBotResponse = (text: string): string => {
-    let formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    formattedText = formattedText.replace(/^- (.*?)(\n|$)/gm, '<li>$1</li>');
+  // Enhanced text formatting with better markdown support
+  const formatBotResponse = useCallback((text: string): string => {
+    let formattedText = text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1 rounded">$1</code>')
+      .replace(/^- (.*?)(\n|$)/gm, '<li>$1</li>')
+      .replace(/^\* (.*?)(\n|$)/gm, '<li>$1</li>')
+      .replace(/^(\d+)\. (.*?)(\n|$)/gm, '<li class="numbered">$2</li>');
+    
     return formattedText.replace("Response:", "").trim();
-  };
-
-  // Initialize session ID (using in-memory storage instead of localStorage)
-  useEffect(() => {
-    const newSessionId = generateSessionId();
-    setSessionId(newSessionId);
   }, []);
 
-  const initialQuestions = [
-    "What services does Fuzionest offer?",
-    "Tell me about the company's mission.",
-    "How can I contact the support team?",
-    "I'd like to book an appointment"
-  ];
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // Initialize session
   useEffect(() => {
-    if (!isUserScrolled) {
-      scrollToBottom();
-    }
-  }, [messages, isUserScrolled]);
+    const newSessionId = generateSessionId();
+    setSession(prev => ({ ...prev, sessionId: newSessionId }));
+  }, []);
 
+  // Enhanced scroll management
+  const scrollToBottom = useCallback((smooth: boolean = true) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: smooth ? "smooth" : "auto",
+        block: "end"
+      });
+    }
+  }, []);
+
+  // Handle scroll events with better UX
+  const handleScroll = useCallback(() => {
+    if (messagesContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+      const isScrolledToBottom = scrollHeight - scrollTop <= clientHeight + 10;
+      const shouldShowScrollButton = scrollHeight > clientHeight && !isScrolledToBottom;
+      
+      setIsUserScrolled(!isScrolledToBottom);
+      setShowScrollButton(shouldShowScrollButton);
+    }
+  }, []);
+
+  // Auto-scroll management
+  useEffect(() => {
+    if (!isUserScrolled && messages.length > 0) {
+      const timer = setTimeout(() => scrollToBottom(), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [messages, isUserScrolled, scrollToBottom]);
+
+  // Focus management
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 100);
+      const timer = setTimeout(() => inputRef.current?.focus(), 150);
+      return () => clearTimeout(timer);
     }
   }, [isOpen]);
 
+  // Welcome message
   useEffect(() => {
     if (isOpen && messages.length === 0) {
-      setMessages([{
+      const welcomeMessage: Message = {
+        id: generateMessageId(),
         sender: 'bot',
-        text: "Hello! I'm Fuzzy, your friendly AI assistant from Fuzionest. 👋 I'm here to help you learn about our services or book a consultation with our expert team. How can I assist you today?",
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-      }]);
+        text: "Hello! I'm **Fuzzy**, your friendly AI assistant from **Fuzionest**. 👋\nI'm here to help you:\n- Learn about our innovative services\n- Book consultations with our expert team\n\nHow can I assist you today?",
+        timestamp: formatTimestamp()
+      };
+      setMessages([welcomeMessage]);
     }
   }, [isOpen, messages.length]);
 
+  // Load common questions
   useEffect(() => {
     if (isOpen && commonQuestions.length === 0) {
       fetchCommonQuestions();
@@ -91,38 +153,56 @@ const Chatbot: React.FC = () => {
 
   const fetchCommonQuestions = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/common-questions');
+      const response = await fetch(COMMON_QUESTIONS_URL);
+      if (!response.ok) throw new Error('Failed to fetch');
       const data = await response.json();
       setCommonQuestions(data.questions || []);
     } catch (error) {
       console.error('Failed to load common questions:', error);
+      // Fallback questions
+      setCommonQuestions([
+        "What services does Fuzionest offer?",
+        "Tell me about the company's mission.",
+        "How can I contact the support team?",
+        "I'd like to book an appointment"
+      ]);
     }
   };
 
-  const sendMessage = async (text: string) => {
-    if (!text.trim() || isLoading) return;
+  // Enhanced message sending with better error handling
+  const sendMessage = async (text: string, isRetry: boolean = false) => {
+    if (!text.trim() || chatStatus === 'typing') return;
+
+    if (session.isBookingConfirmed && /change|update|reschedule|modify/i.test(text)) {
+      setSession(prev => ({ ...prev, isBookingConfirmed: false }));
+    }
 
     const userMessage: Message = {
+      id: generateMessageId(),
       sender: 'user',
       text: text.trim(),
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      timestamp: formatTimestamp()
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
-    setIsLoading(true);
-
+    setChatStatus('typing');
     setIsUserScrolled(false);
-    setTimeout(scrollToBottom, 50);
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Session-ID': sessionId
+          'X-Session-ID': session.sessionId
         },
         body: JSON.stringify({ message: text.trim() }),
+        signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
@@ -131,20 +211,20 @@ const Chatbot: React.FC = () => {
 
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error('Failed to get a readable stream from the response.');
+        throw new Error('Failed to get readable stream');
       }
 
       const decoder = new TextDecoder('utf-8');
       let botMessageText = '';
       let isStreamComplete = false;
 
-      // Create initial bot message
       const tempBotMessage: Message = {
+        id: generateMessageId(),
         sender: 'bot',
         text: '',
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+        timestamp: formatTimestamp()
       };
-      setMessages((prev) => [...prev, tempBotMessage]);
+      setMessages(prev => [...prev, tempBotMessage]);
 
       while (!isStreamComplete) {
         const { value, done } = await reader.read();
@@ -160,260 +240,379 @@ const Chatbot: React.FC = () => {
             if (data.response_chunk) {
               botMessageText += data.response_chunk;
 
-              // Update the bot message in real-time
-              setMessages((prev) => {
-                const lastMessage = prev[prev.length - 1];
-                if (lastMessage && lastMessage.sender === 'bot') {
-                  return [...prev.slice(0, -1), { ...lastMessage, text: botMessageText }];
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const lastIndex = newMessages.length - 1;
+                if (newMessages[lastIndex]?.sender === 'bot') {
+                  newMessages[lastIndex] = {
+                    ...newMessages[lastIndex],
+                    text: botMessageText
+                  };
                 }
-                return [...prev, { ...tempBotMessage, text: botMessageText }];
+                return newMessages;
               });
             }
 
-            // NEW: Check for final message and set isBookingConfirmed state
             if (data.is_final) {
               isStreamComplete = true;
-              if (botMessageText.includes("Your appointment request has been submitted successfully!")) {
-                setIsBookingConfirmed(true);
+              
+              if (botMessageText.includes("Your appointment request has been submitted successfully!") ||
+                  botMessageText.includes("Perfect! Your appointment timing has been updated successfully!")) {
+                setSession(prev => ({ ...prev, isBookingConfirmed: true }));
               }
             }
 
             if (data.session_id) {
-              setSessionId(data.session_id);
+              setSession(prev => ({ ...prev, sessionId: data.session_id }));
             }
             
             if (data.error) {
               throw new Error(data.error);
             }
-          } catch (e) {
-            console.error('Failed to parse JSON chunk:', e);
+          } catch (parseError) {
+            console.error('Failed to parse JSON chunk:', parseError);
           }
         }
       }
 
-    } catch (error) {
+      setRetryCount(0);
+      
+    } catch (error: any) {
       console.error("Error fetching bot response:", error);
 
+      if (error.name === 'AbortError') {
+        return;
+      }
+
       const errorMessage: Message = {
+        id: generateMessageId(),
         sender: 'bot',
-        text: "I apologize, but I'm experiencing some technical difficulties. Please try again in a moment, or feel free to contact our team directly.",
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        text: getErrorMessage(error, retryCount),
+        timestamp: formatTimestamp(),
         isError: true
       };
 
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages(prev => [...prev, errorMessage]);
+      
+      if (retryCount < 2 && !isRetry) {
+        setRetryCount(prev => prev + 1);
+      }
+      
+      setChatStatus('error');
     } finally {
-      setIsLoading(false);
+      setChatStatus('idle');
+      abortControllerRef.current = null;
     }
+  };
+
+  const getErrorMessage = (error: any, retryCount: number): string => {
+    if (error.message?.includes('Failed to fetch')) {
+      return `🔌 **Connection Issue**\n\nI'm having trouble connecting to our servers. Please check your internet connection and try again.\n\n${retryCount < 2 ? '🔄 You can also try sending your message again.' : '📞 If the issue persists, please contact our support team.'}`;
+    }
+    
+    if (error.message?.includes('500')) {
+      return `⚠️ **Server Error**\n\nOur servers are experiencing some issues. Please try again in a moment.\n\n📞 For urgent matters, contact us directly at: **+1 (555) 123-4567**`;
+    }
+
+    return `😔 **Oops! Something went wrong**\n\nI apologize for the technical difficulty. Please try again or contact our team directly.\n\n📧 **Email:** info@fuzionest.com\n📞 **Phone:** +1 (555) 123-4567`;
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || chatStatus === 'typing') return;
     sendMessage(input.trim());
   };
 
   const handleQuestionClick = (question: string) => {
-    sendMessage(question);
+    if (chatStatus !== 'typing') {
+      sendMessage(question);
+    }
   };
   
   const handleTimeSlotClick = (slot: string) => {
-    sendMessage(slot);
+    if (chatStatus !== 'typing' && !session.isBookingConfirmed) {
+      sendMessage(slot);
+    }
   };
   
   const handleConfirmSwitch = (choice: 'yes' | 'no') => {
     if (choice === 'yes') {
       clearChat();
-      sendMessage("I would like to cancel the appointment booking.");
+      setTimeout(() => sendMessage("I would like to cancel the appointment booking."), 500);
     } else {
       sendMessage("I would like to continue with the booking.");
     }
   };
 
   const clearChat = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
     setMessages([]);
-    const newSessionId = generateSessionId();
-    setSessionId(newSessionId);
-    // NEW: Reset booking state when the chat is cleared
-    setIsBookingConfirmed(false);
+    setSession({
+      sessionId: generateSessionId(),
+      isBookingConfirmed: false
+    });
+    setChatStatus('idle');
+    setRetryCount(0);
+    setIsUserScrolled(false);
     
     setTimeout(() => {
-      setMessages([{
+      const welcomeMessage: Message = {
+        id: generateMessageId(),
         sender: 'bot',
-        text: "Hello! I'm Fuzzy, your friendly AI assistant from Fuzionest. 👋 I'm here to help you learn about our services or book a consultation with our expert team. How can I assist you today?",
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-      }]);
-    }, 100);
+        text: "Hello! I'm **Fuzzy**, your friendly AI assistant from **Fuzionest**. 👋\nI'm here to help you:\n- Learn about our innovative services\n- Book consultations with our expert team\n\nHow can I assist you today?",
+        timestamp: formatTimestamp()
+      };
+      setMessages([welcomeMessage]);
+    }, 200);
   };
   
   const renderMessageContent = (text: string) => {
     let messageToRender = text;
     let timeSlotsToRender: string[] = [];
     
-    // Step 1: Handle BOOKING_COMPLETE and its JSON data - IMPROVED VERSION
     const bookingCompleteTag = "BOOKING_COMPLETE:";
-    const bookingCompleteIndex = messageToRender.indexOf(bookingCompleteTag);
-
-    if (bookingCompleteIndex !== -1) {
-      // Extract only the message part before the booking data
-      const preBookingText = messageToRender.substring(0, bookingCompleteIndex).trim();
-      
-      // Find any text after the JSON (like confirmation messages)
-      const jsonStart = messageToRender.indexOf('{', bookingCompleteIndex);
-      let postBookingText = "";
-      
-      if (jsonStart !== -1) {
-        let braceCount = 0;
-        let jsonEnd = -1;
+    const updateCompleteTag = "UPDATE_COMPLETE:";
+    
+    [bookingCompleteTag, updateCompleteTag].forEach(tag => {
+      const tagIndex = messageToRender.indexOf(tag);
+      if (tagIndex !== -1) {
+        const preTagText = messageToRender.substring(0, tagIndex).trim();
+        const jsonStart = messageToRender.indexOf('{', tagIndex);
+        let postTagText = "";
         
-        // Find the end of the JSON
-        for (let i = jsonStart; i < messageToRender.length; i++) {
-          if (messageToRender[i] === '{') {
-            braceCount++;
-          } else if (messageToRender[i] === '}') {
-            braceCount--;
-            if (braceCount === 0) {
-              jsonEnd = i + 1;
-              break;
+        if (jsonStart !== -1) {
+          let braceCount = 0;
+          let jsonEnd = -1;
+          
+          for (let i = jsonStart; i < messageToRender.length; i++) {
+            if (messageToRender[i] === '{') braceCount++;
+            else if (messageToRender[i] === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                jsonEnd = i + 1;
+                break;
+              }
             }
+          }
+          
+          if (jsonEnd !== -1) {
+            postTagText = messageToRender.substring(jsonEnd).trim();
           }
         }
         
-        // If JSON is found, get any text after it
-        if (jsonEnd !== -1) {
-          postBookingText = messageToRender.substring(jsonEnd).trim();
-        }
+        messageToRender = (preTagText + " " + postTagText).trim();
       }
-      
-      // Combine pre-booking text with any post-booking text, excluding the JSON
-      messageToRender = (preBookingText + " " + postBookingText).trim();
-    }
+    });
     
-    // Step 2: Handle TIME_SLOTS_DISPLAY
     const timeSlotsMatch = messageToRender.match(/TIME_SLOTS_DISPLAY:\[(.*?)\]/);
     if (timeSlotsMatch && timeSlotsMatch[1]) {
       try {
         timeSlotsToRender = JSON.parse(`[${timeSlotsMatch[1].replace(/'/g, '"')}]`);
         messageToRender = messageToRender.replace(timeSlotsMatch[0], "").trim();
       } catch (e) {
-        console.error("Failed to parse time slots from AI response:", e);
+        console.error("Failed to parse time slots:", e);
       }
     }
     
-    // Step 3: Handle CONFIRM_SWITCH_MODE
     if (messageToRender.includes("CONFIRM_SWITCH_MODE:")) {
       const message = messageToRender.replace("CONFIRM_SWITCH_MODE:", "").trim();
       return (
         <div>
-          <p dangerouslySetInnerHTML={{ __html: formatBotResponse(message) }} />
-          <div className="flex space-x-2 mt-2">
+          <div dangerouslySetInnerHTML={{ __html: formatBotResponse(message) }} />
+          <div className="flex space-x-3 mt-4">
             <button
               onClick={() => handleConfirmSwitch('yes')}
-              className="bg-red-500 text-white text-sm px-3 py-1 rounded-md"
+              className="flex items-center space-x-2 bg-red-500 hover:bg-red-600 text-white text-sm px-4 py-2 rounded-lg transition-colors"
             >
-              Cancel
+              <X size={16} />
+              <span>Cancel Booking</span>
             </button>
             <button
               onClick={() => handleConfirmSwitch('no')}
-              className="bg-green-500 text-white text-sm px-3 py-1 rounded-md"
+              className="flex items-center space-x-2 bg-green-500 hover:bg-green-600 text-white text-sm px-4 py-2 rounded-lg transition-colors"
             >
-              Continue
+              <CheckCircle size={16} />
+              <span>Continue</span>
             </button>
           </div>
         </div>
       );
     }
 
-    // Step 4: Render the final formatted text (now without JSON data)
     const formattedText = formatBotResponse(messageToRender);
-    const lines = formattedText.split('<li>');
-    const hasList = lines.length > 1;
+    const hasListItems = formattedText.includes('<li>');
 
     return (
       <>
-        {hasList ? (
-          <>
-            <div dangerouslySetInnerHTML={{ __html: lines[0].replace(/\n/g, '<br />') }} />
-            <ul className="list-disc list-inside space-y-1 mt-2" dangerouslySetInnerHTML={{ __html: lines.slice(1).join('<li>') }} />
-          </>
+        {hasListItems ? (
+          <div>
+            {formattedText.split('<li>').map((part, index) => {
+              if (index === 0) {
+                return <div key={index} dangerouslySetInnerHTML={{ __html: part.replace(/\n/g, '<br />') }} />;
+              }
+              const isNumbered = part.includes('class="numbered"');
+              return (
+                <ul key={index} className={`${isNumbered ? 'list-decimal' : 'list-disc'} list-inside space-y-1 mt-2`}>
+                  <li dangerouslySetInnerHTML={{ __html: part.replace('class="numbered"', '').replace('</li>', '') }} />
+                </ul>
+              );
+            })}
+          </div>
         ) : (
           <div dangerouslySetInnerHTML={{ __html: formattedText.replace(/\n/g, '<br />') }} />
         )}
         
-        {/* UPDATED: Conditionally render the time slots based on booking status */}
         {timeSlotsToRender.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-2">
-            {timeSlotsToRender.map((slot, index) => (
-              <button
-                key={index}
-                onClick={() => handleTimeSlotClick(slot)}
-                // NEW: Use the isBookingConfirmed state to disable the buttons
-                disabled={isBookingConfirmed}
-                className={`px-4 py-2 text-sm rounded-md border transition-colors ${
-                  isBookingConfirmed 
-                    ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed' 
-                    : 'bg-indigo-100 text-indigo-600 border-indigo-300 hover:bg-indigo-200'
-                }`}
-              >
-                {slot}
-              </button>
-            ))}
+          <div className="mt-4">
+            <p className="text-sm text-gray-600 mb-2 font-medium">
+              <Clock size={14} className="inline mr-1" />
+              Choose a preferred time slot:
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {timeSlotsToRender.map((slot, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleTimeSlotClick(slot)}
+                  disabled={session.isBookingConfirmed || chatStatus === 'typing'}
+                  className={`px-3 py-2 text-sm rounded-lg border transition-all duration-200 ${
+                    session.isBookingConfirmed || chatStatus === 'typing'
+                      ? 'bg-gray-100 text-gray-500 border-gray-300 cursor-not-allowed' 
+                      : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 hover:shadow-sm'
+                  }`}
+                >
+                  {slot}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Or type your preferred time manually in the message box below.
+            </p>
           </div>
         )}
       </>
     );
   };
-  
-  const handleScroll = () => {
-    if (messagesContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-      const isScrolledToBottom = scrollHeight - scrollTop <= clientHeight + 10;
-      setIsUserScrolled(!isScrolledToBottom);
+
+  // Chat status indicator
+  const renderChatStatus = () => {
+    if (chatStatus === 'typing') {
+      return (
+        <div className="flex justify-start">
+          <div className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm">
+            <div className="flex items-center justify-center space-x-1.5">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse"
+                  style={{ animationDelay: `${i * 0.2}s` }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
     }
+    return null;
+  };
+
+  // Quick suggestions for new users
+  const renderQuickSuggestions = () => {
+    if (messages.length > 1) return null;
+    
+    const suggestions = commonQuestions.length > 0 
+      ? commonQuestions.slice(0, 3) 
+      : [
+          "What services does Fuzionest offer?",
+          "How can I contact the support team?",
+          "I'd like to book an appointment"
+        ];
+
+    return (
+      <div className="p-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-t border-gray-200">
+        <p className="text-sm text-gray-700 mb-3 font-medium flex items-center">
+          <MessageCircle size={16} className="mr-2 text-indigo-600" />
+          Quick suggestions:
+        </p>
+        <div className="space-y-2">
+          {suggestions.map((question, index) => {
+            const isAppointmentQuestion = question.toLowerCase().includes("appointment");
+            const isButtonDisabled = isAppointmentQuestion && session.isBookingConfirmed;
+
+            return (
+              <button
+                key={index}
+                onClick={() => handleQuestionClick(question)}
+                disabled={isButtonDisabled || chatStatus === 'typing'}
+                className={`w-full text-left text-sm p-3 rounded-lg border transition-all duration-200 ${
+                  isButtonDisabled || chatStatus === 'typing'
+                    ? 'text-gray-400 bg-gray-100 cursor-not-allowed border-gray-300'
+                    : 'text-indigo-700 hover:text-indigo-800 hover:bg-white hover:shadow-sm border-indigo-200 bg-indigo-50'
+                }`}
+              >
+                {question}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   return (
     <>
+      {/* Chat Toggle Button */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-4 right-4 z-50 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-all duration-300 hover:scale-110"
+          className="fixed bottom-6 right-6 z-50 p-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110 group"
           aria-label="Open chat"
         >
-          <Menu size={24} />
+          <MessageCircle size={24} className="group-hover:scale-110 transition-transform" />
           <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center animate-pulse">
-            !
+            💬
           </span>
+          <div className="absolute bottom-full right-0 mb-2 px-3 py-1 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+            Chat with Fuzzy AI
+          </div>
         </button>
       )}
 
+      {/* Chat Window */}
+      {/* CHANGED: Made width responsive for narrow phone screens */}
       <div
-        className={`fixed inset-x-0 bottom-0 z-40 w-full h-[calc(100vh-4rem)] max-w-sm sm:max-w-md md:max-w-md lg:max-w-lg bg-white rounded-t-lg shadow-xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out md:inset-auto md:bottom-4 md:right-4 md:h-[600px] md:rounded-lg ${
+        className={`fixed inset-x-0 bottom-0 z-40 w-full h-[90vh] sm:max-w-sm md:max-w-md lg:max-w-lg mx-auto bg-white rounded-t-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out md:inset-auto md:bottom-6 md:right-6 md:h-[640px] md:rounded-xl md:mx-0 ${
           isOpen ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-full opacity-0 scale-95 pointer-events-none'
         }`}
       >
-        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-md">
+        {/* Enhanced Header */}
+        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white shadow-lg">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
-              <span className="text-sm font-bold">F</span>
+            <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+              <span className="text-lg font-bold">F</span>
             </div>
             <div>
               <h2 className="text-lg font-semibold">Fuzzy AI Assistant</h2>
-              <p className="text-xs text-indigo-100">Online • Ready to help</p>
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <p className="text-xs text-indigo-100">Online • Ready to help</p>
+              </div>
             </div>
           </div>
-          <div className="flex space-x-1">
+          <div className="flex space-x-2">
             <button
               onClick={clearChat}
-              className="p-1 rounded-full hover:bg-indigo-700 transition-colors"
+              className="p-2 rounded-full hover:bg-white/20 transition-colors group"
               title="Clear chat"
               aria-label="Clear chat"
             >
-              <RotateCcw size={16} />
+              <RotateCcw size={18} className="group-hover:rotate-180 transition-transform duration-300" />
             </button>
             <button
               onClick={() => setIsOpen(false)}
-              className="p-1 rounded-full hover:bg-indigo-700 transition-colors"
+              className="p-2 rounded-full hover:bg-white/20 transition-colors"
               aria-label="Close chat"
             >
               <X size={18} />
@@ -421,21 +620,26 @@ const Chatbot: React.FC = () => {
           </div>
         </div>
 
-        <div ref={messagesContainerRef} className="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50" onScroll={handleScroll}>
-          {messages.map((msg, index) => (
-            <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`p-3 max-w-[85%] rounded-lg shadow-sm ${
+        {/* Messages Container */}
+        <div 
+          ref={messagesContainerRef}
+          className="flex-1 p-4 overflow-y-auto space-y-4 bg-gradient-to-b from-gray-50 to-white scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
+          onScroll={handleScroll}
+        >
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`p-4 max-w-[85%] rounded-xl shadow-sm transition-all duration-200 ${
                 msg.sender === 'user'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white'
                   : msg.isError
-                  ? 'bg-red-100 text-red-800 border border-red-200'
-                  : 'bg-white text-gray-800 border border-gray-200'
+                  ? 'bg-red-50 text-red-800 border border-red-200'
+                  : 'bg-white text-gray-800 border border-gray-200 hover:shadow-md'
               }`}>
-                <div className="text-sm">
+                <div className="text-sm leading-relaxed">
                   {renderMessageContent(msg.text)}
                 </div>
                 {msg.timestamp && (
-                  <p className={`text-xs mt-1 ${
+                  <p className={`text-xs mt-2 ${
                     msg.sender === 'user' ? 'text-indigo-100' : 'text-gray-500'
                   }`}>
                     {msg.timestamp}
@@ -445,81 +649,67 @@ const Chatbot: React.FC = () => {
             </div>
           ))}
 
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="p-3 bg-white border border-gray-200 rounded-lg shadow-sm max-w-[85%]">
-                <div className="flex items-center space-x-2">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
-                  </div>
-                  <span className="text-sm text-gray-500">Fuzzy is typing...</span>
-                </div>
-              </div>
-            </div>
-          )}
+          {renderChatStatus()}
           <div ref={messagesEndRef} />
         </div>
 
-        {messages.length <= 1 && (
-          <div className="p-4 bg-white border-t border-gray-200">
-            <p className="text-sm text-gray-600 mb-2 font-medium">Quick questions:</p>
-            <div className="space-y-2">
-              {(commonQuestions.length > 0 ? commonQuestions.slice(0, 3) : initialQuestions.slice(0, 3)).map((question, index) => {
-                const isAppointmentQuestion = question.toLowerCase().includes("appointment");
-                // NEW: Disable the appointment button if a booking is confirmed
-                const isButtonDisabled = isAppointmentQuestion && isBookingConfirmed;
-
-                return (
-                  <button
-                    key={index}
-                    onClick={() => handleQuestionClick(question)}
-                    className={`w-full text-left text-sm p-2 rounded-md border transition-colors ${
-                      isButtonDisabled
-                        ? 'text-gray-400 bg-gray-100 cursor-not-allowed border-gray-300'
-                        : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border-indigo-200'
-                    }`}
-                    // NEW: Add disabled attribute
-                    disabled={isButtonDisabled}
-                  >
-                    {question}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={() => scrollToBottom()}
+            className="absolute bottom-20 right-4 p-2 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-colors z-10"
+            aria-label="Scroll to bottom"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
         )}
 
+        {/* Quick Suggestions */}
+        {renderQuickSuggestions()}
+
+        {/* Enhanced Input Form */}
         <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-3">
             <input
               ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask me anything about Fuzionest..."
-              className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
-              disabled={isLoading}
+              placeholder={chatStatus === 'typing' ? " " : "Ask me anything about Fuzionest..."}
+              className="flex-1 p-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm transition-all duration-200"
+              disabled={chatStatus === 'typing'}
+              maxLength={500}
             />
             <button
               type="submit"
-              className="p-2 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:bg-indigo-400 disabled:cursor-not-allowed"
-              disabled={!input.trim() || isLoading}
+              className={`p-3 rounded-xl shadow-md transition-all duration-200 ${
+                (!input.trim() || chatStatus === 'typing')
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:scale-105'
+              }`}
+              disabled={!input.trim() || chatStatus === 'typing'}
               aria-label="Send message"
             >
               <Send size={18} />
             </button>
           </div>
-          <p className="text-xs text-gray-500 mt-2 text-center">
-            Powered by Fuzzy AI • Press Enter to send
-          </p>
+          <div className="flex justify-between items-center mt-2">
+            <p className="text-xs text-gray-500">
+              Powered by Fuzzy AI • Press Enter to send
+            </p>
+            <p className="text-xs text-gray-400">
+              {input.length}/500
+            </p>
+          </div>
         </form>
       </div>
     </>
   );
 };
 
+// Header Component
 const Header: React.FC<{ currentPage: Page; onPageChange: (page: Page) => void }> = ({ currentPage, onPageChange }) => (
   <header className="bg-white shadow-lg p-4 sticky top-0 z-30">
     <div className="container mx-auto flex items-center justify-between">
@@ -578,6 +768,7 @@ const Header: React.FC<{ currentPage: Page; onPageChange: (page: Page) => void }
   </header>
 );
 
+// Page Components
 const HomePage: React.FC = () => (
   <div className="flex flex-col items-center justify-center h-full px-4 text-center">
     <Rocket size={80} className="text-indigo-600 mb-6" />
@@ -719,8 +910,10 @@ const ContactPage: React.FC = () => (
   </div>
 );
 
+// Main App Component
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('home');
+  
   const renderPage = () => {
     switch (currentPage) {
       case 'about': return <AboutPage />;
@@ -729,6 +922,7 @@ const App: React.FC = () => {
       case 'home': default: return <HomePage />;
     }
   };
+
   return (
     <div className="flex flex-col min-h-screen bg-gray-100 font-sans">
       <Header currentPage={currentPage} onPageChange={setCurrentPage} />
